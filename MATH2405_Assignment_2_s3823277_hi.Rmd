@@ -1,0 +1,434 @@
+---
+title: "MATH2405 - Assignment 2 - s3823277"
+author: "Hassan Ismail - s3823277"
+subtitle: Assignment 2 Dataset challenge
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+## Required packages 
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(forecast)
+```
+## Data 
+
+Voiceover presentation:
+https://www.loom.com/share/9235c3cf71d34eeb8e7db65ef61540d3 (5minutes)
+
+More detailed presentation:
+https://www.loom.com/share/0dd94ccaa6ec47589e32f7e58d441046 (15 minutes)
+
+
+Steps: 1, 2
+
+The Data I used deals with air pollution measurement information in Seoul, South Korea.
+This public data is provided by Seoul Metropolitan Government https://data.seoul.go.kr/ and was structured by https://www.kaggle.com/bappekim (https://www.kaggle.com/bappekim/air-pollution-in-seoul?)
+it provides hourly average values for six pollutants (SO2, NO2, CO, O3, PM10, PM2.5) taken between 2017 and 2019 in 25 different site in Seoul.
+
+I am using three datasets:
+- Measurement_info.csv: contains the measurement readings.
+- Measurement_station_info.csv: sites (stations) information.
+- Measurement_item_info.csv: measurement information to help interpret the readings.
+
+https://data.seoul.go.kr/dataList/OA-15526/S/1/datasetView.do
+https://data.seoul.go.kr/dataList/OA-15516/S/1/datasetView.do
+https://data.seoul.go.kr/dataList/OA-15515/S/1/datasetView.do
+
+I will merge first the Main dataset with Measurement Info, and convert the dataset from long to wide, and then i will merge the Station Info.
+
+```{r}
+# Reading the datasets and stor in separate dataframes
+df_main <- read.csv("data/AirPollutionSeoul/Original Data/Measurement_info.csv") # ~4 milllions observations.
+
+df_station <- read.csv("data/AirPollutionSeoul/Original Data/Measurement_station_info.csv")
+
+df_info <- read.csv("data/AirPollutionSeoul/Original Data/Measurement_item_info.csv")
+
+```
+
+## Understand 
+
+```{r}
+# Check main dataset summary:
+df_main %>% summary()
+#df_main_bkp<- df_main
+```
+There's one point needs to be highlighted regarding the Instrument.Status variable:
+this variable gives the status of the measuring device, and it takes values as per below:
+0: Normal, 1: Need for calibration, 2: Abnormal, 4: Power cut off, 8: Under repair, 9: abnormal data
+
+This means that only when it's normal (0) the device reading to be consdered, that's why I will consider all the readings corresponding to status != 0 are invalid, I will give them NA values and then impute new values, and then I can remove the "Instrument.Status" column (no more needed):
+```{r}
+# Setting Average.value (device reading) tp NA for every observation when the device is not normal (!=0):
+df_main[df_main$Instrument.status != 0,]$Average.value <- NA
+# Remove the Instrument.Status column:
+df_main<- df_main[c(-5)]
+```
+
+```{r}
+# Checking vars classes:
+df_main %>% sapply(class)
+```
+We have one factor var (string contains data and time), three integers and one numeric.
+
+```{r}
+##sapply(df_main, function(x) sum(is.na(x)))
+# Measurement Info contain the interpretation of the device codes and what the readings mean.
+# Merging main dataset with the Measurement Info dataset, :
+df_main <- merge(df_main, df_info[c(1:2)], by = "Item.code")
+
+# Re-ordering the columns, and removing the Item Code column (since now we have the Item name):
+df_main <- df_main[c(2,3,5,4)]
+
+```
+Now we our dataset has almost 4 million readings, contains reading from different devices, so we can create new columns out of the reading column (column for each device: or each type of measurement):
+
+
+##	Tidy & Manipulate Data I 
+The dataset is untidy now, the "Average.value" column contains observations for multiple variabls (CO2, O3, NO2, ..)
+To addresss this issue, I will spread the Average.value column into multiple columns.
+
+```{r}
+# before I merge the dataset I need to ensur the "Item.name" is factor:
+
+df_main$Item.name %>% class() # factor so we can covert it to wide
+
+# separating the Item name Average.value column itno columns (based on the unique values of Item.name):
+df_main<- spread(df_main, Item.name, Average.value)
+
+# Now I will merge the third dataset(station information):
+df_main <- merge(df_main, df_station[c(1:2)], by = "Station.code")
+
+# re-ordering the columns, and remove the station code:
+df_main <- df_main[c(9,2:8)]
+
+# Renaming columns:
+colnames(df_main)[1] <- "Station"
+colnames(df_main)[2] <- "Date"
+
+```
+Now I can say that my dataset is tidy: each variable is presented by one column, each row decribe one observation, and each value has its own cell.
+I still have intentional NA values, which I will deal with them later.
+
+##	Tidy & Manipulate Data II 
+
+Date column contains infromation for the data and time, which I will split into year, month, day, and hour, in case the analysis needs to group by month or year for example.
+```{r}
+# checking the type of Date var
+df_main$Date %>% typeof() # integer, so I will convert to string then split
+
+# convert Date to string
+df_main$Date <- df_main$Date %>% as.character()
+
+# Separate Date into two columns: Date and Time: (the string contains a space, we used to split)
+df_main <- df_main %>% separate(Date, c("Date","Time"), " ")
+# convert the Time column to time format (only hour provided):
+df_main$Time<- format(as.POSIXct(df_main$Time, format="%H:%M"),"%H")
+# Again splitting the Date column into three columns: Year, Month and Day:
+df_main <- df_main %>% separate(Date, c("Year","Month","Day"), "-")
+
+# converting the new columns to factors:
+df_main$Year <- as.factor(df_main$Year)
+df_main$Month <- as.factor(df_main$Month)
+df_main$Day <- as.factor(df_main$Day)
+df_main$Time <- as.factor(df_main$Time)
+
+
+df_main %>% sapply(class)
+
+#df_main_bkp<-df_main
+```
+Info dataset provides information to understand the reading, we can use this information to create new columns in our dataset which will be easier to understand if the observation was normal or bad etc.
+For this I will create a function for each measurment type which will scan the observartion and tell if the reading is good or bad (based on Info dataset thresholds) and save these information in new columns:
+```{r}
+# I DIDN'T USE THIS FUNCTION: 
+# A fuction to check CO column and compare the reading values with the thresholds from Info dataset, and then save in a new column:
+#flagCO <- function(x,y) {
+#  result<-"Good"
+#  if (y > df_info[df_info$Item.name == x,4]) { result <- "Normal" }
+#  else if (y > df_info[df_info$Item.name == x,5]) { result <- "Bad" }
+#  else if (y > df_info[df_info$Item.name == x,6]) { result <- "Very Bad" }
+#  return(result)
+#}
+
+# Check the functionality:
+#flagCO("CO", 2)
+
+# Create a new column in the dataset, containing the meaning of the SO2 reading, by comparing these readings to the thresholds in Info dataset:
+df_main <- mutate(df_main, FlagSO2 = case_when(as.numeric(SO2) > df_info[1,7]~"Red",
+                                              as.numeric(SO2) > df_info[1,6]~"Yellow",
+                                              as.numeric(SO2) > df_info[1,5]~"Green",
+                                              TRUE ~"Blue")
+)
+# The above code created a new column (FlagSO2), contains the flag color indicating the air quality taking only SO2 measurment, as below:
+# Blue: very good Air qulatiy (low SO2)
+# Green: Normal
+# Yellow: Bad quality
+# Red; very bad quality
+
+# same procedure like above for NO2
+df_main <- mutate(df_main, FlagNO2 = case_when(as.numeric(NO2) > df_info[2,7]~"Red",
+                                              as.numeric(NO2) > df_info[2,6]~"Yellow",
+                                              as.numeric(NO2) > df_info[2,5]~"Green",
+                                              TRUE ~"Blue")
+)
+# same procedure like above for CO
+df_main <- mutate(df_main, FlagCO = case_when(as.numeric(CO) > df_info[3,7] ~"Red",
+                                              as.numeric(CO) > df_info[3,6] ~"Yellow",
+                                              as.numeric(CO) > df_info[3,5] ~"Green",
+                                              TRUE ~"Blue")
+)
+# same procedure like above for O3
+df_main <- mutate(df_main, FlagO3 = case_when(as.numeric(O3) > df_info[4,7] ~"Red",
+                                              as.numeric(O3) > df_info[4,6] ~"Yellow",
+                                              as.numeric(O3) > df_info[4,5] ~"Green",
+                                              TRUE ~"Blue")
+)
+
+# same procedure like above for MP10
+df_main <- mutate(df_main, FlagPM10 = case_when(as.numeric(PM10) > df_info[5,7] ~"Red",
+                                              as.numeric(PM10) > df_info[5,6] ~"Yellow",
+                                              as.numeric(PM10) > df_info[5,5] ~"Green",
+                                              TRUE ~"Blue")
+)
+# same procedure like above for MP2.5
+df_main <- mutate(df_main, FlagPM2.5	 = case_when(as.numeric(PM2.5	) > df_info[6,7] ~"Red",
+                                              as.numeric(PM2.5	) > df_info[6,6] ~"Yellow",
+                                              as.numeric(PM2.5	) > df_info[6,5] ~"Green",
+                                              TRUE ~"Blue")
+)
+
+# Now our dataset can tell easily the air quality:
+head(df_main)
+```
+
+##	Scan I 
+As mentioned before, I intentially assigned some NA values, and now I will work on replacing them with the appropriate values.
+It would be possibel to use some ready library to process the missing values like Hmisc, and we don't have a clear rule among vars to utilise "validatore" package to help in this.
+But considering the type of the data: device readings taken hourly.
+this data might change from day to day or by months.
+So replacing missing values with meand, median or other values might impact the accurecy.
+
+I think the best approach is to replace each missing value with the mean of the tow values before and after which have been taken by the same device, at the same site.
+To do so, first I need to ensure that dataset is ordered by: Station, year, Month, day, Time.
+in this case we are sure the related entries are in sequence.
+I have one disadvantage: when the the very first or the very last reading at a certain site is NA, but the likelyhood is too small to consider, I can detect this case after completing the previous step by checking if I have NAs left in the dataset, and I can address by setting previous or next observations.
+
+I also took into account if I have multiple NA consequetive values in a row, that's why my function will replace the NA with the mean of last non-NA value and the next non-NA value read at a given station:
+
+```{r}
+# checking the number of NAs:
+sapply(df_main, function(x) sum(is.na(x)))
+
+# Re-order the dataset (as mentioned above):
+df_main <- df_main %>% arrange(Station, Year, Month, Day, Time)
+
+
+# This code will loop over CO column, and replace each (x = NA) with the mean of 
+# the last non-NA: tail(na.omit(df_main$CO[1:(x-1)],1))
+#and the next non-NA: head(na.omit(df_main$CO[(x+1):length(df_main$CO)])
+for (x in 1:length(df_main$CO)) {
+  if (is.na(df_main$CO[x])) {
+    df_main$CO[x] <- mean(
+      c(tail(na.omit(df_main$CO[1:(x-1)],1)), head(na.omit(df_main$CO[(x+1):length(df_main$CO)])))
+    )
+  }
+}
+
+# Same like above for NO2 column:
+for (x in 1:length(df_main$NO2)) {
+  if (is.na(df_main$NO2[x])) {
+    df_main$NO2[x] <- mean(
+      c(tail(na.omit(df_main$NO2[1:(x-1)],1)), head(na.omit(df_main$NO2[(x+1):length(df_main$NO2)])))
+    )
+  }
+}
+# Same like above for O3 column:
+for (x in 1:length(df_main$O3)) {
+  if (is.na(df_main$O3[x])) {
+    df_main$O3[x] <- mean(
+      c(tail(na.omit(df_main$O3[1:(x-1)],1)), head(na.omit(df_main$O3[(x+1):length(df_main$O3)])))
+    )
+  }
+}
+# Same like above for PM2.5 column:
+for (x in 1:length(df_main$PM2.5)) {
+  if (is.na(df_main$PM2.5[x])) {
+    df_main$PM2.5[x] <- mean(
+      c(tail(na.omit(df_main$PM2.5[1:(x-1)],1)), head(na.omit(df_main$PM2.5[(x+1):length(df_main$PM2.5)])))
+    )
+  }
+}
+
+# Same like above for PM10 column:
+for (x in 1:length(df_main$PM10)) {
+  if (is.na(df_main$PM10[x])) {
+    df_main$PM10[x] <- mean(
+      c(tail(na.omit(df_main$PM10[1:(x-1)],1)), head(na.omit(df_main$PM10[(x+1):length(df_main$PM10)])))
+    )
+  }
+}
+# Same like above for SO2 column:
+for (x in 1:length(df_main$SO2)) {
+  if (is.na(df_main$SO2[x])) {
+    df_main$SO2[x] <- mean(
+      c(tail(na.omit(df_main$SO2[1:(x-1)],1)), head(na.omit(df_main$SO2[(x+1):length(df_main$SO2)])))
+    )
+  }
+}
+
+sapply(df_main, function(x) sum(is.na(x)))
+
+```
+Now the dataset doesn't have any NA
+
+##	Scan II
+We have six numeric variables (one fore each measurement).
+taking each var individually, I can apply univariate outlier detection approaches:
+
+```{r}
+# Outlier detection in CO values:
+# I will use boxplot to identify the outliers, where outliers will be plotted outside the range of upper limit and lower limit: lower limit = Q1 - 1.5(Q3-Q1) and upper limit = Q3 + 1.5(Q3-Q1)
+
+# box plot for CO var:
+boxplot(df_main$CO, main="Box Plot of CO",medcol = "red", outpch = 4, outcex = 0.5) 
+```
+We can notice that we have few outlier under the range and many outlier above the range.
+to understand the impact of those outlier on the analysis, I will compare some statistics with and without outliers:
+```{r}
+# stats with outliers included:
+summary(df_main$CO)
+# stats without outliers:
+summary(df_main$CO[!df_main$CO %in% boxplot.stats(df_main$CO)$out])
+```
+There are clear differences, so the outliers have clear impact on the stats, so it's better to treat them, and I will choose to give them the var mean value:
+```{r}
+df_main$CO[df_main$CO %in% boxplot.stats(df_main$CO)$out]<-mean(df_main$CO)
+
+```
+
+```{r}
+# Same for NO2 column
+boxplot(df_main$NO2, main="Box Plot of NO2",medcol = "red", outpch = 4, outcex = 0.5)
+# stats with outliers included:
+summary(df_main$NO2)
+# stats without outliers:
+summary(df_main$NO2[!df_main$NO2 %in% boxplot.stats(df_main$NO2)$out])
+
+length(df_main$NO2[df_main$NO2 %in% boxplot.stats(df_main$NO2)$out])
+length(df_main$NO2[!df_main$NO2 %in% boxplot.stats(df_main$NO2)$out])
+```
+For NO2 column, I can see only a slight difference in the Mean value.
+I would choose to keep those outlier values, since no major impact on the stats
+
+```{r}
+# O3 column
+boxplot(df_main$O3, main="Box Plot of O3",medcol = "red", outpch = 4, outcex = 0.5)
+# stats with outliers included:
+summary(df_main$O3)
+# stats without outliers:
+summary(df_main$O3[!df_main$O3 %in% boxplot.stats(df_main$O3)$out])
+
+# total number of outliers
+length(df_main$O3[df_main$O3 %in% boxplot.stats(df_main$O3)$out])
+# total number of observation
+length(df_main$O3[!df_main$O3 %in% boxplot.stats(df_main$O3)$out])
+
+```
+Even I think we can keep those as well, but I wil choose to give them the mean value
+```{r}
+df_main$O3[df_main$O3 %in% boxplot.stats(df_main$O3)$out]<-mean(df_main$O3)
+
+```
+
+```{r}
+#boxplot(df_main$SO2, main="Box Plot of SO2",medcol = "red", outpch = 4, outcex = 0.5)
+#length(df_main$SO2[df_main$SO2 %in% boxplot.stats(df_main$SO2)$out])
+
+# For SO2 I will use z.socre approach:
+library(outliers)
+z.scores_SO2 <- df_main$SO2 %>%  scores(type = "z")
+z.scores_SO2 %>% summary()
+length (which( abs(z.scores_SO2) >3 ))
+
+```
+Noticing that we have negative values which to my knowledge are not correct, we need to remove those values.
+Also when looking at the max value ~22, and when looking at te info dataset, I can see that any value above 1 is considered as a very bad quality, so for sure those values also need to be removed.
+```{r}
+df_main$SO2[df_main$SO2 %in% boxplot.stats(df_main$SO2)$out]<-mean(df_main$SO2)
+
+```
+
+
+```{r}
+
+#boxplot(df_main$PM10, main="Box Plot of PM10",medcol = "red", outpch = 4, outcex = 0.5)
+#boxplot(df_main$PM2.5, main="Box Plot of PM2.5",medcol = "red", outpch = 4, outcex = 0.5)
+#
+
+# For PM2.5 and PM10, frankly I am not sure if there's any correalation, but I will treat this siutaion as bivariate case, and for this I will scatter both vars and see if we have outliers:
+df_main %>% plot(PM2.5~PM10, data = ., ylab = "PM2.5", xlab = "PM10")
+
+```
+It shows that we have an outlier in the uppler left corner, and some outliers also in the bottom right corner.
+```{r}
+# To remove the upper left outlier:
+df_main$PM2.5[df_main$PM2.5 > 190]<- mean(df_main$PM2.5)
+
+df_main$PM10[df_main$PM10 >350]<- mean(df_main$PM10)
+
+# check the scatter again after the removal
+df_main %>% plot(PM2.5~PM10, data = ., ylab = "PM2.5", xlab = "PM10")
+
+```
+
+##	Transform 
+
+For this I will take the NO2 variable:
+
+```{r}
+# First I will check the distribution of its values:
+hist(df_main$NO2)
+# right-skweness >> log or sqrt
+```
+We can notice from the histogram that the NO2 has a right-skewed distribution (positively skewed).
+in this case the mode is clearly around 0.015-0.02, but the mean and median will be on the right sides.
+So we cannot use a clear center in this distribution, and to deal with this we can try to make it as normal as we can.
+For the right skewed distribution, the log transformation is one of the best to use, also we can try to use square root or others.
+```{r}
+# apply square root transformation:
+#df_main$NO2<-sqrt(df_main$NO2)
+hist(sqrt(df_main$NO2))
+
+```
+
+
+```{r}
+#library(forecast)
+# For PM10 var, I will apply the Box Cox approach using forecast library, which will suggest the best value for lambda
+# 
+# the histogram before transfromatoin
+hist(df_main$PM10)
+
+# ths histogram if Box Cox transformation was applied:
+hist(BoxCox(df_main$PM10, lambda = "auto"))
+```
+We notice how powerful this transformation in normalising the distribution
+Before it was sharp right-skewed, but after the transformation it became normal distribution.
+
+```{r}
+
+```
+# IMPORTANT NOTE: 
+
+#Thank you
+

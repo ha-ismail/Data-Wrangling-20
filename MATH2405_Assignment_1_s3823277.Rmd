@@ -1,0 +1,384 @@
+---
+title: "MATH2405 TP3, 2020"
+author: "Hassan Ismail"
+subtitle: Assignment 1
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+# Student ID: s3823277
+## Setup
+
+
+```{r, echo = TRUE, warnings = FALSE}
+
+library(readr) # Useful for importing data
+library(foreign) # Useful for importing SPSS, SAS, STATA etc. data files
+library(rvest) # Useful for scraping HTML data
+library(knitr) # Useful for creating nice tables
+library(dplyr)
+library(plyr) # rename factor levels
+library(tidyr) # separate a column into multiple columns
+
+```
+
+
+
+## Locate Data 
+
+
+## Read/Import Data
+
+
+```{r}
+
+# This is an R chunk for importing the data. Provide your R codes here:
+# After downloading the dataset from (https://www.longpaddock.qld.gov.au/silo/point-data/) as csv files
+# reading the 3 csv files into a data frame (main_df), the csv files has exactly the same column names so no need to change anything.
+
+# read first csv file into the data frame:
+main_df <- read.csv("/Users/hi/Documents/DSSL/Data Wrangling/Assignment/1/datasets/qld_silo_2020_86071.csv")
+# read the second csv file and adding to the data frame:
+main_df<- rbind(main_df,read.csv("/Users/hi/Documents/DSSL/Data Wrangling/Assignment/1/datasets/qld_silo_2020_40913.csv"))
+# read the thrid csv file and to the data frame:
+main_df<- rbind(main_df,read.csv("/Users/hi/Documents/DSSL/Data Wrangling/Assignment/1/datasets/qld_silo_2020_66006.csv"))
+
+# previewing the top 5 rows:
+head(main_df)
+
+# backup the dataframe
+#df_bkp1 <- main_df
+```
+
+
+Explain everything that you do in this step using regular text outside the R chunks. You may use bulleted lists like this:
+
+
+## Data description
+SILO is a database of Australian climate data from 1889 to the present. It provides daily meteorological datasets for a range of climate variables in ready-to-use formats.
+
+I will use the export page provided by SILO to export a dataset containing information of the daily rainfall and the min and max tempratures recorded from 1st Jan 20000 to 31st Dec 2019 of three stations (in Melbourne, Sydney and Brisbane).
+
+Data export page:
+https://www.longpaddock.qld.gov.au/silo/point-data/
+
+Climate variables description:
+https://www.longpaddock.qld.gov.au/silo/about/climate-variables/
+
+I uploaded the exported CSV files to the below link:
+http://hassan-ismail.com/rmit/dataWrangling/src 
+
+Variables:
+* Station is the station ID where the data observed and recorded.
+* YYYY-MM-DD: the day of the observation
+* daily_rain: the amount of rainfall 
+* max_temp: the highest temp degree recorded on the day
+* min_temp: the lowest temp degree recorded on the day
+* daily_rain_source, max_temp_source, min_temp_source and metadata will be ignored 
+
+
+
+
+## Inspect dataset and variables
+
+```{r}
+
+#summary(main_df)
+dim(main_df)
+# As we see the dataframe dimensions are (129649 rows and 19 columns)
+
+```
+Data frame dimensions: 21915 rows x 9 columns
+
+```{r}
+# We will check the data types of the columns (variables):
+dtypes<- data.frame(sapply(main_df, class))
+dtypes$vars <- rownames(dtypes)
+colnames(dtypes) <- c("vartype", "vars")
+dtypes %>% filter(vartype == "factor")
+
+dtypes %>% filter(vartype == "integer")
+
+dtypes %>% filter(vartype == "numeric")
+
+```
+We have: 
+2 factor variables
+4 integer variables
+3 numeric variables
+```{r}
+# Check the dataset summary:
+summary(main_df[,1:5])
+summary(main_df[,6:9])
+```
+From the summary of the dataframe we notice the below findings:
+* station variable is a numeric ID of the station where the reading was taken (we can replace by name of station).
+* YYY.MM.DD variable (character) is the day of the reading, we can split into 3 vars (year, month, day)
+* daily_rain variable is numeric var of the amount of rainfall on the day.
+* max_temp and min_temp (numerics) are the highest and lowest temprature reading on the day
+* the rest of vars we can ignore.
+
+```{r}
+# Keeping only the needed columns:
+main_df<-main_df %>% select(station, YYYY.MM.DD , daily_rain, max_temp, min_temp)
+
+```
+```{r}
+# station var:
+# From our dataset export we know that we have retrieved datasets for Melbourne, Sydney and Brisbane.
+# and we know the station Id for each, so we can replace the numeric value with the corresponding name.
+
+# we convert the column to factor
+main_df$station <- factor(main_df$station)
+# check the levels:
+levels(main_df$station)
+
+```
+We have 3 levels for this factor
+
+## Tidy data 
+
+```{r}
+# Rename the levels of factor with the corresponding names
+levels(main_df$station)<- c("40913"="Brisbane", "66006"="Sydney", "86071"="Melbourne")
+# re-check the new levels of station variable:
+levels((main_df$station))
+```
+
+```{r}
+# Split the YYYY.MM.DD into three columns:
+main_df <- main_df %>% separate(YYYY.MM.DD, c("day", "month", "year"), "/")
+
+# for the year column, we notice that they use only 2 digit, so we add the 20 prefix (e.g. 19 will be 2019)
+main_df$year <- sprintf('20%s',main_df$year)
+
+# let's see the data frame again after the split:
+head(main_df)
+
+# now that we have new three vars, we will convert to factors and check their levels:
+main_df$year <- as.factor(main_df$year)
+main_df$month <- as.factor(main_df$month)
+main_df$day <- as.factor(main_df$day)
+
+# need to re-order the levels of the factors
+# day levels from 1 to 31
+main_df$day <- factor(main_df$day, levels = as.character(c(1:31)))
+# month levels are the month abbr names:
+main_df$month <- factor(main_df$month, levels = as.character(c("Jan","Feb","Mar","Apr", "May", "Jun","Jul","Aug","Sep","Oct","Nov","Dec")))
+# year levels are year numbers from 2000 t0 2019
+main_df$year <- factor(main_df$year, levels = as.character(c(2000:2019)))
+
+
+```
+
+```{r}
+# check the levels of the new columns
+levels(main_df$day) #31
+levels(main_df$month) #12
+levels(main_df$year) #20
+```
+
+We can say that our dataset is tidy:
+Each variable has its own column.
+Each reading has a row.
+and each value has a cell.
+```{r}
+#summary(main_df)
+# We will check the data types of the columns (variables) ofthe new dataframe:
+dtypes2<- data.frame(sapply(main_df, class))
+dtypes2$vars <- rownames(dtypes2)
+colnames(dtypes2) <- c("vartype", "vars")
+dtypes2 %>% filter(vartype == "factor")
+dtypes2 %>% filter(vartype == "numeric")
+
+
+```
+we have now 4 factor variables, and three numeric variables
+
+## Summary statistics 
+```{r}
+# we will group the 3 numeric vars (daily_rain, max_temp, min_temp) by the station and check their stats:
+
+# Daily rain grouped by station, showing the stats(mean, min. max. median and standard deviation):
+main_df %>% group_by(station) %>% summarise_at(vars(daily_rain), funs(mean, min, max, median, sd))
+```
+
+```{r}
+# Minimum temprature grouped by station, showing the stats(mean, min. max. median and standard deviation):
+main_df %>% group_by(station) %>% summarise_at(vars(min_temp), funs(mean, min, max, median, sd))
+```
+```{r}
+# Max temprature grouped by station, showing the stats(mean, min. max. median and standard deviation):
+main_df %>% group_by(station) %>% summarise_at(vars(max_temp), funs(mean, min, max, median, sd))
+
+```
+
+
+## Create a list
+
+```{r}
+
+# This is a chunk where you create a list
+
+# Considering the Station variable (categorical var) wiht three levels
+# I create a list os 3 items, and give names to the items
+
+mapping_code <- setNames(as.list(c(1:3)), levels(main_df$station))
+mapping_code
+```
+
+
+
+
+## Join the list
+
+```{r}
+# This is a chunk where you join the list
+# Merging the new list with the main data frame
+# for that I converted the list to data frame, then merging the data frames by station_id
+merged_df <- merge(x=main_df, y = t(data.frame(mapping_code, row.names = "station_id")), by.x = "station", by.y = 0)
+
+# preview the top observation of the new data frame
+head(merged_df)
+```
+
+
+
+
+## Subsetting I
+
+```{r}
+
+# This is a chunk to subset your data and convert it to a matrix 
+#subsetting the top 10 observation:
+df10<-main_df[1:10,]
+# preview the subset:
+df10
+
+#converting to matrix
+matrix_df10 <- as.matrix(df10)
+#checking the structure:
+typeof(as.matrix(df10)) # character
+```
+We notice that the matrix structure is "character", we know that vector and matrices can hold only elements of one data type, and we converted the dataframe (containing elements of different data types) to matrix, the data types were checked and since there were character elements "station" which could only be character (can not be understood as numeric), so the general data type that can accept all the elements of data frame is "character", as we can convert numeric into "character". 
+
+## Subsetting II
+
+
+```{r}
+
+# This is a chunk to subset your data and convert it to an R object file 
+
+# To subset the dataframe taking only the first and last variable, we use the simple code below:
+# defining which columns to keep: the first (order 1) and the last one with the order (ncol(main_df): its order equals the number of columns the dataframe has)
+subset2 <- main_df[,c(1, ncol(main_df))]
+
+# Saving the subset object into RData file:
+save(subset2, file = "subset.RData")
+
+# previewing the top observations of the new subset
+head(subset2)
+```
+
+## Create a new Data Frame
+
+```{r}
+
+# I will consider having a dataset of second hand (used) items for sale in the market, let's say of 10 entries, each entry is a record of an used item.
+# for the initial set up: I will have two variables:
+#   - item_id: a unique numeric ID of the item
+#   - condition: the current conditions of the item which can take a value of the list ("Bad","Good", "Very Good","Like new").
+
+# Create a vector of the item_id with 10 elements (from 1 to 10):
+items_ids <- c(1:10)
+
+#preview the vector:
+items_ids
+
+# Create a list of the condition options:
+conds <- c("Bad","Good", "Very Good","Like new")
+
+# Create a vector of 10 elements taking random values of the above list, with replace option to allow taking the option more than once:
+conds10 <- sample(conds, size=10, replace = T)
+# Convert to factor with oredered levels
+item_condition <- factor(conds10, order = TRUE, levels =conds)
+# we enusre the levels are orderd properly:
+levels(item_condition)
+
+# Create the dataframe from the above two vectors:
+df_11 <- data.frame(items_ids, item_condition)
+# preview the dataframe:
+df_11
+
+# Checking the structure of the variables:
+class(df_11$items_ids) # integer
+class(df_11$item_condition) # ordinal factor
+
+```
+
+```{r}
+# Create a new numerci vector, this vector will represent the price of the items.
+# let's say the price's range is 10.00 - 1000.00 (round values to 2 digits)
+price_vector <-round(runif(10, min = 10.00, max = 1000.00), 2)
+# preview the vector:
+price_vector
+
+# (***) additional step just to make the item pricing more reasonable, I will order the dataframe and prices vector before combining both: to ensure all "like-new" items have the highest prices and so on..
+# order the dataframe by the levels of the condition column (from bad to like-new):
+df_11_ordered_by_cond<-df_11[order(df_11[,2]),]
+
+# order the price vector:
+price_vector_ordered<-sort(price_vector)
+
+# Now adding the vector to the dataframe, naming the new column (price):
+df_11<-cbind(df_11_ordered_by_cond, price = price_vector_ordered)
+
+# Following (***) Re-ording the data frame by the items_ids (restoring the original order of the dataframe):
+df_11<- df_11[order(df_11$items_ids), ]
+
+#preview the final data frame:
+df_11
+
+```
+
+## Create another Data Frame
+
+```{r}
+
+# I will create a new dataframe having the same items_ids column with new variables (product and location)
+
+# creating product vector (of random 10 items):
+prods <- c("Laptop","Phone", "tablet","PC","Monitor","TV")
+prods10 <- sample(prods, size=10, replace = T)
+
+# Convert to factor with oredered levels
+product <- factor(prods10, order = TRUE, levels =prods)
+# preview the vector:
+product
+
+# creating product vector (of random 10 items):
+locs <- c("Melbourne","Sydney", "Brisbane")
+locs10 <- sample(locs, size=10, replace = T)
+
+# Convert to factor with oredered levels
+location <- factor(locs10, order = TRUE, levels =locs)
+#preview the location vector: 
+location
+
+# Now combining all three vectors and creating a new dataframe:
+df_12<-data.frame(items_ids, product, location)
+
+# preview the result data frame:
+df_12
+
+# Joining df_11 and df_12 basd on the items_ids column
+df_merged <- merge(df_11, df_12, by = "items_ids")
+
+# previewing the final data frame after join
+df_merged
+```
+
+
+
